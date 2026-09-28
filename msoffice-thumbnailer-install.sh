@@ -190,18 +190,28 @@ Exec=/usr/local/bin/msoffice-thumbnailer %i %o %s
 MimeType=application/msword;application/vnd.ms-word;application/vnd.ms-excel;application/vnd.ms-powerpoint;application/vnd.openxmlformats-officedocument.wordprocessingml.document;application/vnd.openxmlformats-officedocument.wordprocessingml.template;application/vnd.openxmlformats-officedocument.spreadsheetml.sheet;application/vnd.openxmlformats-officedocument.spreadsheetml.template;application/vnd.openxmlformats-officedocument.presentationml.presentation;application/vnd.openxmlformats-officedocument.presentationml.template;application/vnd.openxmlformats-officedocument.presentationml.slideshow;application/vnd.oasis.opendocument.text;application/vnd.oasis.opendocument.text-template;application/vnd.oasis.opendocument.spreadsheet;application/vnd.oasis.opendocument.spreadsheet-template;application/vnd.oasis.opendocument.presentation;application/vnd.oasis.opendocument.presentation-template;application/vnd.oasis.opendocument.graphics;application/vnd.oasis.opendocument.graphics-template;application/vnd.sun.xml.writer;application/vnd.sun.xml.calc;application/vnd.sun.xml.impress;application/vnd.sun.xml.draw;
 ENDOFENTRY
 
+# mktemp creates files as 0600.  If we copy that straight into
+# /usr/share/thumbnailers/ the entry ends up root-only, and Nautilus
+# (running as the logged-in user) cannot read it — it silently skips the
+# thumbnailer with "Failed to load thumbnailer ... Permission denied".
+# Make the source readable and force 0644 on the installed entry.
+chmod 644 "$TMP_ENTRY"
+
 if [ "$(id -u)" -eq 0 ]; then
   cp "$TMP_ENTRY" "$ENTRY_DEST"
+  chmod 644 "$ENTRY_DEST"
 else
   if command -v pkexec >/dev/null 2>&1; then
     pkexec cp "$TMP_ENTRY" "$ENTRY_DEST"
+    pkexec chmod 644 "$ENTRY_DEST"
   else
     sudo cp "$TMP_ENTRY" "$ENTRY_DEST"
+    sudo chmod 644 "$ENTRY_DEST"
   fi
 fi
 
 rm -f "$TMP_ENTRY"
-ok "Thumbnailer entry → $ENTRY_DEST"
+ok "Thumbnailer entry → $ENTRY_DEST (mode 644)"
 
 # ----  disable the old gsf-office thumbnailer  ----------------------------
 # gsf-office-thumbnailer only extracts *embedded* thumbnails from Office
@@ -231,7 +241,7 @@ CACHE_DIR="$HOME/.cache/thumbnails/fail/gnome-thumbnail-factory"
 
 if [ -d "$CACHE_DIR" ]; then
   say "Clearing thumbnail failure cache..."
-  rm -rf "$CACHE_DIR"/*
+  rm -rf "${CACHE_DIR:?}"/*
   ok "Failure cache cleared"
 fi
 
@@ -243,6 +253,14 @@ if /usr/local/bin/msoffice-thumbnailer; then
 else
   warn "TryExec check failed — please report this"
 fi
+
+# Nautilus runs as the logged-in user and must be able to *read* the
+# .thumbnailer entry, otherwise it is skipped entirely.
+ENTRY_PERMS="$(stat -c '%a' "$ENTRY_DEST" 2>/dev/null || echo '000')"
+case "$ENTRY_PERMS" in
+  *[4567]) ok "Entry is world-readable (mode $ENTRY_PERMS)" ;;
+  *)       warn "Entry mode is $ENTRY_PERMS — Nautilus cannot read it and thumbnails will NOT appear." ;;
+esac
 
 # ----  done  ---------------------------------------------------------------
 echo ""
